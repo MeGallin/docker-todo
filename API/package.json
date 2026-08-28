@@ -6,12 +6,18 @@
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",
-    "dev": "node --watch src/server.js"
+    "dev": "node --watch src/server.js",
+    "test": "node --test"
   },
   "engines": {
     "node": ">=22"
   },
   "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "cors": "^2.8.6",
     "express": "^5.2.1"
+  },
+  "devDependencies": {
+    "supertest": "^7.2.2"
   }
 }

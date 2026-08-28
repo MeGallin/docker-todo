@@ -1,0 +1,390 @@
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ArrowClockwise,
+  CalendarBlank,
+  Check,
+  CheckCircle,
+  Circle,
+  ClockCountdown,
+  ListChecks,
+  MagnifyingGlass,
+  Moon,
+  NotePencil,
+  Plus,
+  Sun,
+  Trash,
+  Warning,
+  X,
+} from "@phosphor-icons/react";
+import { api } from "./api";
+
+const EMPTY_TASK = {
+  title: "",
+  description: "",
+  status: "todo",
+  priority: "medium",
+  category: "",
+  tags: [],
+  dueDate: "",
+};
+
+const STATUS_LABELS = {
+  todo: "To do",
+  in_progress: "In progress",
+  completed: "Completed",
+};
+
+const PRIORITY_LABELS = {
+  low: "Low",
+  medium: "Medium",
+  high: "High",
+  urgent: "Urgent",
+};
+
+function App() {
+  const [todos, setTodos] = useState([]);
+  const [stats, setStats] = useState({ total: 0, todo: 0, inProgress: 0, completed: 0, overdue: 0, urgent: 0 });
+  const [filters, setFilters] = useState({ status: "all", priority: "all", search: "", sort: "created", order: "desc" });
+  const [draftSearch, setDraftSearch] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [editing, setEditing] = useState(null);
+  const [composerOpen, setComposerOpen] = useState(false);
+  const [theme, setTheme] = useState(() => {
+    const saved = localStorage.getItem("docklist-theme");
+    if (saved === "light" || saved === "dark") return saved;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  });
+
+  const loadData = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const [todoResult, statsResult] = await Promise.all([api.getTodos(filters), api.getStats()]);
+      setTodos(todoResult.todos);
+      setStats(statsResult.stats);
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setLoading(false);
+    }
+  }, [filters]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setFilters((current) => (current.search === draftSearch ? current : { ...current, search: draftSearch }));
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [draftSearch]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
+
+  useEffect(() => {
+    const root = document.documentElement;
+    root.dataset.theme = theme;
+    localStorage.setItem("docklist-theme", theme);
+  }, [theme]);
+
+  const completionRate = stats.total ? Math.round((stats.completed / stats.total) * 100) : 0;
+  const activeFilterCount = [filters.status, filters.priority].filter((value) => value !== "all").length;
+
+  async function mutate(action) {
+    setSaving(true);
+    setError("");
+    try {
+      await action();
+      await loadData();
+      return true;
+    } catch (requestError) {
+      setError(requestError.message);
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function createTask(task) {
+    const success = await mutate(() => api.createTodo(task));
+    if (success) setComposerOpen(false);
+    return success;
+  }
+
+  async function updateTask(task) {
+    const { id, createdAt, updatedAt, completedAt, ...changes } = task;
+    const success = await mutate(() => api.updateTodo(id, changes));
+    if (success) setEditing(null);
+    return success;
+  }
+
+  const todayText = useMemo(
+    () => new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long" }).format(new Date()),
+    []
+  );
+
+  return (
+    <div className="app-shell">
+      <aside className="sidebar" aria-label="Application navigation">
+        <div className="brand-mark" aria-hidden="true"><Check weight="bold" /></div>
+        <nav>
+          <button className="nav-icon active" aria-label="Tasks"><ListChecks /></button>
+          <button className="nav-icon" aria-label="Upcoming" disabled><CalendarBlank /></button>
+        </nav>
+        <button
+          className="nav-icon theme-button"
+          aria-label={`Use ${theme === "dark" ? "light" : "dark"} theme`}
+          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+        >
+          {theme === "dark" ? <Sun /> : <Moon />}
+        </button>
+      </aside>
+
+      <main className="workspace">
+        <header className="page-header">
+          <div>
+            <p className="date-line">{todayText}</p>
+            <h1>Make today count.</h1>
+            <p className="header-copy">Capture the work, choose what matters, and finish with focus.</p>
+          </div>
+          <button className="primary-button" onClick={() => setComposerOpen(true)}>
+            <Plus weight="bold" /> Add task
+          </button>
+        </header>
+
+        <section className="summary-grid" aria-label="Task summary">
+          <div className="progress-panel">
+            <div className="progress-copy">
+              <span>Overall progress</span>
+              <strong>{completionRate}%</strong>
+              <small>{stats.completed} of {stats.total} tasks complete</small>
+            </div>
+            <div className="progress-ring" style={{ "--progress": `${completionRate * 3.6}deg` }} aria-label={`${completionRate}% complete`}>
+              <span>{completionRate}%</span>
+            </div>
+          </div>
+          <Stat label="In progress" value={stats.inProgress} icon={<ClockCountdown />} />
+          <Stat label="Due attention" value={stats.overdue + stats.urgent} icon={<Warning />} tone="warning" />
+        </section>
+
+        <section className="task-section">
+          <div className="task-heading">
+            <div>
+              <h2>Your tasks</h2>
+              <p>{stats.total ? `${stats.total - stats.completed} still active` : "A clear list starts here"}</p>
+            </div>
+            {stats.completed > 0 && (
+              <button className="text-button danger" disabled={saving} onClick={() => mutate(api.clearCompleted)}>
+                <Trash /> Clear completed
+              </button>
+            )}
+          </div>
+
+          <div className="toolbar">
+            <label className="search-field">
+              <span className="sr-only">Search tasks</span>
+              <MagnifyingGlass />
+              <input value={draftSearch} onChange={(event) => setDraftSearch(event.target.value)} placeholder="Search tasks" />
+              {draftSearch && <button aria-label="Clear search" onClick={() => setDraftSearch("")}><X /></button>}
+            </label>
+            <label>
+              <span className="sr-only">Filter by status</span>
+              <select value={filters.status} onChange={(event) => setFilters({ ...filters, status: event.target.value })}>
+                <option value="all">All statuses</option>
+                <option value="todo">To do</option>
+                <option value="in_progress">In progress</option>
+                <option value="completed">Completed</option>
+              </select>
+            </label>
+            <label>
+              <span className="sr-only">Filter by priority</span>
+              <select value={filters.priority} onChange={(event) => setFilters({ ...filters, priority: event.target.value })}>
+                <option value="all">All priorities</option>
+                <option value="urgent">Urgent</option>
+                <option value="high">High</option>
+                <option value="medium">Medium</option>
+                <option value="low">Low</option>
+              </select>
+            </label>
+            <label>
+              <span className="sr-only">Sort tasks</span>
+              <select value={filters.sort} onChange={(event) => setFilters({ ...filters, sort: event.target.value })}>
+                <option value="created">Recently added</option>
+                <option value="updated">Recently updated</option>
+                <option value="due">Due date</option>
+                <option value="priority">Priority</option>
+              </select>
+            </label>
+          </div>
+
+          {error && (
+            <div className="error-banner" role="alert">
+              <Warning weight="fill" />
+              <span>{error}</span>
+              <button onClick={loadData}><ArrowClockwise /> Try again</button>
+            </div>
+          )}
+
+          {loading ? (
+            <TaskSkeleton />
+          ) : todos.length ? (
+            <div className="task-list">
+              {todos.map((todo) => (
+                <TaskRow
+                  key={todo.id}
+                  todo={todo}
+                  disabled={saving}
+                  onToggle={() => mutate(() => api.toggleTodo(todo.id))}
+                  onEdit={() => setEditing(todo)}
+                  onDelete={() => mutate(() => api.deleteTodo(todo.id))}
+                />
+              ))}
+            </div>
+          ) : (
+            <EmptyState filtered={Boolean(draftSearch || activeFilterCount)} onAdd={() => setComposerOpen(true)} onReset={() => {
+              setDraftSearch("");
+              setFilters({ status: "all", priority: "all", search: "", sort: "created", order: "desc" });
+            }} />
+          )}
+        </section>
+      </main>
+
+      {(composerOpen || editing) && (
+        <TaskDialog
+          task={editing || EMPTY_TASK}
+          mode={editing ? "edit" : "create"}
+          saving={saving}
+          onClose={() => { setComposerOpen(false); setEditing(null); }}
+          onSave={editing ? updateTask : createTask}
+        />
+      )}
+    </div>
+  );
+}
+
+function Stat({ label, value, icon, tone = "default" }) {
+  return (
+    <div className={`stat-panel ${tone}`}>
+      <span className="stat-icon">{icon}</span>
+      <div><strong>{value}</strong><span>{label}</span></div>
+    </div>
+  );
+}
+
+function TaskRow({ todo, disabled, onToggle, onEdit, onDelete }) {
+  const isComplete = todo.status === "completed";
+  const overdue = !isComplete && todo.dueDate && todo.dueDate < new Date().toISOString().slice(0, 10);
+  const dueText = todo.dueDate
+    ? new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" }).format(new Date(`${todo.dueDate}T12:00:00`))
+    : null;
+
+  return (
+    <article className={`task-row ${isComplete ? "completed" : ""}`}>
+      <button className="complete-button" disabled={disabled} aria-label={isComplete ? `Mark ${todo.title} active` : `Complete ${todo.title}`} onClick={onToggle}>
+        {isComplete ? <CheckCircle weight="fill" /> : <Circle />}
+      </button>
+      <div className="task-content">
+        <div className="task-title-line">
+          <h3>{todo.title}</h3>
+          <span className={`priority priority-${todo.priority}`}>{PRIORITY_LABELS[todo.priority]}</span>
+        </div>
+        {todo.description && <p>{todo.description}</p>}
+        <div className="task-meta">
+          <span>{STATUS_LABELS[todo.status]}</span>
+          {todo.category && <span>{todo.category}</span>}
+          {dueText && <span className={overdue ? "overdue" : ""}><CalendarBlank /> {overdue ? "Overdue " : "Due "}{dueText}</span>}
+          {todo.tags.map((tag) => <span key={tag}>#{tag}</span>)}
+        </div>
+      </div>
+      <div className="row-actions">
+        <button disabled={disabled} onClick={onEdit} aria-label={`Edit ${todo.title}`}><NotePencil /></button>
+        <button disabled={disabled} onClick={onDelete} aria-label={`Delete ${todo.title}`} className="delete-action"><Trash /></button>
+      </div>
+    </article>
+  );
+}
+
+function EmptyState({ filtered, onAdd, onReset }) {
+  return (
+    <div className="empty-state">
+      <span className="empty-icon">{filtered ? <MagnifyingGlass /> : <ListChecks />}</span>
+      <h3>{filtered ? "No tasks match" : "Your list is ready"}</h3>
+      <p>{filtered ? "Try changing the search or filters." : "Add your first task and give today a clear direction."}</p>
+      <button className="secondary-button" onClick={filtered ? onReset : onAdd}>{filtered ? "Reset filters" : "Add first task"}</button>
+    </div>
+  );
+}
+
+function TaskSkeleton() {
+  return (
+    <div className="task-list skeleton-list" aria-label="Loading tasks">
+      {[0, 1, 2].map((item) => <div className="skeleton-row" key={item}><i /><div><b /><span /></div></div>)}
+    </div>
+  );
+}
+
+function TaskDialog({ task, mode, saving, onClose, onSave }) {
+  const [form, setForm] = useState({ ...task, dueDate: task.dueDate || "", tags: task.tags || [] });
+  const [tagText, setTagText] = useState((task.tags || []).join(", "));
+  const [fieldError, setFieldError] = useState("");
+
+  function update(field, value) {
+    setForm((current) => ({ ...current, [field]: value }));
+  }
+
+  async function submit(event) {
+    event.preventDefault();
+    if (!form.title.trim()) {
+      setFieldError("Give the task a short, clear title.");
+      return;
+    }
+    setFieldError("");
+    await onSave({
+      ...form,
+      title: form.title.trim(),
+      tags: [...new Set(tagText.split(",").map((tag) => tag.trim()).filter(Boolean))],
+      dueDate: form.dueDate || null,
+    });
+  }
+
+  useEffect(() => {
+    function closeOnEscape(event) {
+      if (event.key === "Escape") onClose();
+    }
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [onClose]);
+
+  return (
+    <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section className="task-dialog" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
+        <div className="dialog-header">
+          <div><h2 id="dialog-title">{mode === "edit" ? "Edit task" : "Add a task"}</h2><p>Keep it specific enough to act on.</p></div>
+          <button className="icon-button" onClick={onClose} aria-label="Close dialog"><X /></button>
+        </div>
+        <form onSubmit={submit}>
+          <label className="field-block">
+            <span>Title</span>
+            <input autoFocus value={form.title} maxLength="160" onChange={(event) => update("title", event.target.value)} aria-invalid={Boolean(fieldError)} />
+            {fieldError && <small className="field-error">{fieldError}</small>}
+          </label>
+          <label className="field-block">
+            <span>Notes</span>
+            <textarea rows="4" value={form.description} maxLength="2000" onChange={(event) => update("description", event.target.value)} />
+          </label>
+          <div className="form-grid">
+            <label className="field-block"><span>Status</span><select value={form.status} onChange={(event) => update("status", event.target.value)}><option value="todo">To do</option><option value="in_progress">In progress</option><option value="completed">Completed</option></select></label>
+            <label className="field-block"><span>Priority</span><select value={form.priority} onChange={(event) => update("priority", event.target.value)}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select></label>
+            <label className="field-block"><span>Due date</span><input type="date" value={form.dueDate} onChange={(event) => update("dueDate", event.target.value)} /></label>
+            <label className="field-block"><span>Category</span><input value={form.category} maxLength="80" onChange={(event) => update("category", event.target.value)} placeholder="Work, personal, launch" /></label>
+          </div>
+          <label className="field-block"><span>Tags</span><input value={tagText} onChange={(event) => setTagText(event.target.value)} placeholder="docker, render, backend" /><small>Separate tags with commas.</small></label>
+          <div className="dialog-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={saving}>{saving ? "Saving" : mode === "edit" ? "Save changes" : "Add task"}</button></div>
+        </form>
+      </section>
+    </div>
+  );
+}
+
+export default App;
