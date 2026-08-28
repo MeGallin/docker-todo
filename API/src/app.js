@@ -5,18 +5,23 @@ const path = require("node:path");
 const { createTodoRepository } = require("./todoRepository");
 const { ValidationError, validateTodo, STATUSES, PRIORITIES } = require("./validation");
 
-function createCorsOptions() {
+function createCorsOptions(request, callback) {
   const configured = process.env.CLIENT_ORIGINS
     ? process.env.CLIENT_ORIGINS.split(",").map((origin) => origin.trim()).filter(Boolean)
     : [];
   const allowed = new Set(["http://localhost:5173", "http://127.0.0.1:5173", ...configured]);
+  const origin = request.get("Origin");
+  let sameHost = false;
 
-  return {
-    origin(origin, callback) {
-      if (!origin || allowed.has(origin)) return callback(null, true);
-      return callback(new Error("Origin is not allowed"));
-    },
-  };
+  if (origin) {
+    try {
+      sameHost = new URL(origin).host === request.get("host");
+    } catch {
+      sameHost = false;
+    }
+  }
+
+  callback(null, { origin: !origin || sameHost || allowed.has(origin) });
 }
 
 function createApp(database, options = {}) {
@@ -29,7 +34,7 @@ function createApp(database, options = {}) {
   const hasClient = fs.existsSync(clientEntry);
 
   app.disable("x-powered-by");
-  app.use(cors(createCorsOptions()));
+  app.use(cors(createCorsOptions));
   app.use(express.json({ limit: "32kb" }));
   if (hasClient) app.use(express.static(publicDirectory));
 
@@ -119,9 +124,6 @@ function createApp(database, options = {}) {
   app.use((error, _request, response, _next) => {
     if (error instanceof ValidationError) {
       return response.status(400).json({ error: error.message, fields: error.errors });
-    }
-    if (error.message === "Origin is not allowed") {
-      return response.status(403).json({ error: error.message });
     }
     console.error(error);
     return response.status(500).json({ error: "Unexpected server error" });

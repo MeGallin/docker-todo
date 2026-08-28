@@ -9,6 +9,22 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      window.addEventListener("error", function (event) {
+        var root = document.getElementById("root");
+        if (root && !root.hasChildNodes()) {
+          root.style.cssText = "padding:24px;font:16px/1.5 system-ui;color:#8a1f17";
+          root.textContent = "The application could not start: " + event.message;
+        }
+      });
+      window.addEventListener("unhandledrejection", function (event) {
+        var root = document.getElementById("root");
+        if (root && !root.hasChildNodes()) {
+          root.style.cssText = "padding:24px;font:16px/1.5 system-ui;color:#8a1f17";
+          root.textContent = "The application could not start: " + String(event.reason);
+        }
+      });
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
