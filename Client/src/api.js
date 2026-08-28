@@ -1,4 +1,6 @@
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || "http://localhost:10000").replace(/\/$/, "");
+const configuredApiUrl = import.meta.env.VITE_API_BASE_URL?.trim();
+const defaultApiUrl = import.meta.env.PROD ? window.location.origin : "http://localhost:10000";
+const API_BASE_URL = (configuredApiUrl || defaultApiUrl).replace(/\/$/, "");
 
 async function request(path, options = {}) {
   const response = await fetch(`${API_BASE_URL}${path}`, {

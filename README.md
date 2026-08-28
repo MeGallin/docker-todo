@@ -1,9 +1,10 @@
 # Docker Todo
 
-A two-part task manager built to prove a Docker deployment workflow on Render:
+A full-stack task manager built as one Docker deployment for Render:
 
-- `API`: Node.js, Express, and SQLite, packaged as a Docker service
-- `Client`: React and Vite, consuming the API over REST
+- `API`: Node.js, Express, and SQLite
+- `Client`: React and Vite, compiled into the same container
+- Production: Express serves both the interface and the REST API from one URL
 
 ## Features
 
@@ -62,23 +63,29 @@ npm --prefix API test
 npm --prefix Client run build
 ```
 
+## Docker
+
+The repository-level Dockerfile builds the React client, compiles the SQLite driver, and produces one lean runtime image:
+
+```powershell
+docker build -t docker-todo .
+docker run --rm -p 10000:10000 docker-todo
+```
+
+Open `http://localhost:10000` for the application. The API remains available under `/api`.
+
 ## Render configuration
 
-The existing Render web service can continue to use:
+The Render web service uses:
 
 - Runtime: Docker
-- Root directory: `API`
+- Root directory: blank, so the repository root is used
 - Dockerfile path: `./Dockerfile`
 - Health check path: `/health`
 
 The container stores SQLite at `/app/data/todos.sqlite`. `DATA_DIR` and `DATABASE_FILE` can change that location without changing application code.
 
-For a separately hosted client, set:
-
-- Client environment: `VITE_API_BASE_URL=https://docker-todo-30yw.onrender.com`
-- API environment: `CLIENT_ORIGINS=https://your-client-domain.example`
-
-`CLIENT_ORIGINS` accepts a comma-separated list when more than one client origin is required.
+In production the client calls the API on the same origin, so no frontend URL or CORS environment variable is required. `VITE_API_BASE_URL` and `CLIENT_ORIGINS` remain available for separate development environments.
 
 ## SQLite on Render free services
 

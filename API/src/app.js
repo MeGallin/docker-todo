@@ -1,5 +1,7 @@
 const express = require("express");
 const cors = require("cors");
+const fs = require("node:fs");
+const path = require("node:path");
 const { createTodoRepository } = require("./todoRepository");
 const { ValidationError, validateTodo, STATUSES, PRIORITIES } = require("./validation");
 
@@ -17,21 +19,19 @@ function createCorsOptions() {
   };
 }
 
-function createApp(database) {
+function createApp(database, options = {}) {
   const app = express();
   const todos = createTodoRepository(database);
+  const publicDirectory = path.resolve(
+    options.publicDirectory || process.env.PUBLIC_DIR || path.join(__dirname, "..", "public")
+  );
+  const clientEntry = path.join(publicDirectory, "index.html");
+  const hasClient = fs.existsSync(clientEntry);
 
   app.disable("x-powered-by");
   app.use(cors(createCorsOptions()));
   app.use(express.json({ limit: "32kb" }));
-
-  app.get("/", (_request, response) => {
-    response.json({
-      message: "Docker Todo API is running",
-      documentation: "/api",
-      environment: process.env.NODE_ENV || "development",
-    });
-  });
+  if (hasClient) app.use(express.static(publicDirectory));
 
   app.get("/health", (_request, response) => {
     database.prepare("SELECT 1").get();
@@ -102,6 +102,14 @@ function createApp(database) {
 
   app.get("/api/stats", (_request, response) => {
     response.json({ stats: todos.stats() });
+  });
+
+  app.use((request, response, next) => {
+    const acceptsHtml = request.accepts("html");
+    if (hasClient && request.method === "GET" && acceptsHtml && !request.path.startsWith("/api")) {
+      return response.sendFile(clientEntry);
+    }
+    return next();
   });
 
   app.use((_request, response) => {
