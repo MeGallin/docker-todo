@@ -4,6 +4,5 @@ dist/
 .env.*
 !.env.example
 npm-debug.log*
-API/data/*.sqlite*
 .DS_Store
 Thumbs.db

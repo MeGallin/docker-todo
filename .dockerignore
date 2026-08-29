@@ -5,6 +5,5 @@
 **/.env
 **/.env.*
 !**/.env.example
-API/data
 npm-debug.log*
 README.md
