@@ -75,7 +75,6 @@ async function createAuthentication(database, options = {}) {
   router.post("/logout", authenticate, requireCsrf, async (request, response) => {
     await database.query("DELETE FROM auth_sessions WHERE token_hash = $1", [request.authTokenHash]);
     response.setHeader("Set-Cookie", clearSessionCookie(cookieName, secureCookies));
-    response.setHeader("Clear-Site-Data", '"cache", "cookies"');
     return response.status(204).end();
   });
 

@@ -57,7 +57,15 @@ export const api = {
     return result;
   },
   async logout() {
-    await request("/api/auth/logout", { method: "POST" });
+    const sendLogout = () => request("/api/auth/logout", { method: "POST", keepalive: true });
+    try {
+      await sendLogout();
+    } catch (error) {
+      if (error.status !== 403) throw error;
+      const session = await request("/api/auth/session", {}, { suppressUnauthorized: true });
+      csrfToken = session.csrfToken;
+      await sendLogout();
+    }
     csrfToken = null;
   },
   getTodos(query = {}) {

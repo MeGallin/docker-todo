@@ -67,6 +67,7 @@ function App() {
   const [authStatus, setAuthStatus] = useState("loading");
   const [authError, setAuthError] = useState("");
   const [authenticating, setAuthenticating] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
   const [theme, setTheme] = useState(() => {
     const saved = localStorage.getItem("docklist-theme");
     if (saved === "light" || saved === "dark") return saved;
@@ -204,7 +205,8 @@ function App() {
   }
 
   async function logout() {
-    setSaving(true);
+    if (loggingOut) return;
+    setLoggingOut(true);
     setError("");
     try {
       await api.logout();
@@ -212,9 +214,15 @@ function App() {
       setStats({ total: 0, todo: 0, inProgress: 0, completed: 0, overdue: 0, urgent: 0 });
       setAuthStatus("unauthenticated");
     } catch (requestError) {
-      setError(requestError.message);
+      if (requestError.status === 401) {
+        setTodos([]);
+        setStats({ total: 0, todo: 0, inProgress: 0, completed: 0, overdue: 0, urgent: 0 });
+        setAuthStatus("unauthenticated");
+      } else {
+        setError(requestError.message);
+      }
     } finally {
-      setSaving(false);
+      setLoggingOut(false);
     }
   }
 
@@ -254,7 +262,9 @@ function App() {
             className="nav-icon"
             aria-label="Log out"
             title="Log out"
-            disabled={saving}
+            type="button"
+            disabled={loggingOut}
+            aria-busy={loggingOut}
             onClick={logout}
           >
             <SignOut weight="bold" />

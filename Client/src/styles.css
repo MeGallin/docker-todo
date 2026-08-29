@@ -119,6 +119,7 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   background: transparent;
   color: var(--text-muted);
   font-size: 22px;
+  touch-action: manipulation;
   transition: background 160ms ease, color 160ms ease, transform 160ms ease;
 }
 
