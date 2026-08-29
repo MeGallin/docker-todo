@@ -18,9 +18,6 @@ COPY package*.json ./
 COPY --from=dependencies --chown=node:node /app/node_modules ./node_modules
 
 COPY --chown=node:node src ./src
-RUN mkdir -p /app/data && chown node:node /app/data
-
-ENV DATA_DIR=/app/data
 
 USER node
 EXPOSE 10000

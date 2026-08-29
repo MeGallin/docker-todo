@@ -2,28 +2,32 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const request = require("supertest");
 const argon2 = require("argon2");
+const { newDb } = require("pg-mem");
 const { createApp } = require("../src/app");
-const { createDatabase } = require("../src/database");
+const { initializeDatabase } = require("../src/database");
 
 const TEST_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
 
-function setup() {
-  const database = createDatabase({ filename: ":memory:" });
+async function setup() {
+  const memory = newDb();
+  const { Pool } = memory.adapters.createPg();
+  const database = new Pool();
+  await initializeDatabase(database);
   return {
     database,
-    app: createApp(database, { encryptionKey: TEST_ENCRYPTION_KEY, disableAuthentication: true }),
+    app: await createApp(database, { encryptionKey: TEST_ENCRYPTION_KEY, disableAuthentication: true }),
   };
 }
 
 test("health checks both the service and database", async () => {
-  const { app, database } = setup();
+  const { app, database } = await setup();
   const response = await request(app).get("/health").expect(200);
   assert.deepEqual(response.body, { status: "ok", database: "connected" });
-  database.close();
+  await database.end();
 });
 
 test("creates, lists, updates, toggles, and deletes a task", async () => {
-  const { app, database } = setup();
+  const { app, database } = await setup();
 
   const created = await request(app)
     .post("/api/todos")
@@ -40,7 +44,7 @@ test("creates, lists, updates, toggles, and deletes a task", async () => {
   assert.equal(created.body.todo.title, "Ship the Docker prototype");
   assert.deepEqual(created.body.todo.tags, ["docker", "render"]);
 
-  const stored = database.prepare("SELECT title, description, category, tags FROM todos").get();
+  const stored = (await database.query("SELECT title, description, category, tags FROM todos")).rows[0];
   for (const value of Object.values(stored)) {
     assert.match(value, /^enc:v1:/);
     assert.equal(value.includes("Docker"), false);
@@ -69,11 +73,11 @@ test("creates, lists, updates, toggles, and deletes a task", async () => {
 
   await request(app).delete(`/api/todos/${created.body.todo.id}`).expect(204);
   await request(app).get(`/api/todos/${created.body.todo.id}`).expect(404);
-  database.close();
+  await database.end();
 });
 
 test("sorts dated tasks from nearest to latest with undated tasks last", async () => {
-  const { app, database } = setup();
+  const { app, database } = await setup();
   const tasks = [
     { title: "Later task", dueDate: "2026-09-10" },
     { title: "Undated task", dueDate: null },
@@ -89,32 +93,35 @@ test("sorts dated tasks from nearest to latest with undated tasks last", async (
     response.body.todos.map((todo) => todo.title),
     ["Sooner task", "Later task", "Undated task"]
   );
-  database.close();
+  await database.end();
 });
 
 test("encrypts existing plaintext tasks when encryption is enabled", async () => {
-  const database = createDatabase({ filename: ":memory:" });
-  const now = new Date().toISOString();
-  database.prepare(`
+  const memory = newDb();
+  const { Pool } = memory.adapters.createPg();
+  const database = new Pool();
+  await initializeDatabase(database);
+  const now = new Date();
+  await database.query(`
     INSERT INTO todos (
       title, description, status, priority, category, tags,
       due_date, created_at, updated_at, completed_at
-    ) VALUES (?, ?, 'todo', 'medium', ?, ?, NULL, ?, ?, NULL)
-  `).run("Existing task", "Private notes", "Personal", '["legacy"]', now, now);
+    ) VALUES ($1, $2, 'todo', 'medium', $3, $4, NULL, $5, $5, NULL)
+  `, ["Existing task", "Private notes", "Personal", '["legacy"]', now]);
 
-  const app = createApp(database, { encryptionKey: TEST_ENCRYPTION_KEY, disableAuthentication: true });
-  const stored = database.prepare("SELECT title, description, category, tags FROM todos").get();
+  const app = await createApp(database, { encryptionKey: TEST_ENCRYPTION_KEY, disableAuthentication: true });
+  const stored = (await database.query("SELECT title, description, category, tags FROM todos")).rows[0];
   Object.values(stored).forEach((value) => assert.match(value, /^enc:v1:/));
 
   const response = await request(app).get("/api/todos?search=private&category=Personal").expect(200);
   assert.equal(response.body.todos.length, 1);
   assert.equal(response.body.todos[0].title, "Existing task");
   assert.equal(response.body.todos[0].description, "Private notes");
-  database.close();
+  await database.end();
 });
 
 test("rejects invalid task data", async () => {
-  const { app, database } = setup();
+  const { app, database } = await setup();
   const response = await request(app)
     .post("/api/todos")
     .send({ title: "", priority: "impossible", dueDate: "2026-02-30" })
@@ -123,7 +130,7 @@ test("rejects invalid task data", async () => {
   assert.equal(response.body.fields.title, "This field is required");
   assert.ok(response.body.fields.priority);
   assert.ok(response.body.fields.dueDate);
-  database.close();
+  await database.end();
 });
 
 test("protects the API with a login session and CSRF token", async () => {
@@ -134,8 +141,11 @@ test("protects the API with a login session and CSRF token", async () => {
     timeCost: 1,
     parallelism: 1,
   });
-  const database = createDatabase({ filename: ":memory:" });
-  const app = createApp(database, {
+  const memory = newDb();
+  const { Pool } = memory.adapters.createPg();
+  const database = new Pool();
+  await initializeDatabase(database);
+  const app = await createApp(database, {
     encryptionKey: TEST_ENCRYPTION_KEY,
     passwordHash,
     secureCookies: false,
@@ -175,14 +185,25 @@ test("protects the API with a login session and CSRF token", async () => {
     .expect(200);
   assert.equal(session.body.csrfToken, login.body.csrfToken);
 
+  const restartedApp = await createApp(database, {
+    encryptionKey: TEST_ENCRYPTION_KEY,
+    passwordHash,
+    secureCookies: false,
+  });
+  const restoredSession = await request(restartedApp)
+    .get("/api/auth/session")
+    .set("Cookie", sessionCookie)
+    .expect(200);
+  assert.equal(restoredSession.body.csrfToken, login.body.csrfToken);
+
   const logout = await request(app)
     .post("/api/auth/logout")
     .set("Cookie", sessionCookie)
     .set("X-CSRF-Token", login.body.csrfToken)
     .expect(204);
   assert.match(logout.headers["set-cookie"][0], /Max-Age=0/);
-  assert.equal(database.prepare("SELECT COUNT(*) AS count FROM auth_sessions").get().count, 0);
+  assert.equal(Number((await database.query("SELECT COUNT(*) AS count FROM auth_sessions")).rows[0].count), 0);
 
   await request(app).get("/api/todos").set("Cookie", sessionCookie).expect(401);
-  database.close();
+  await database.end();
 });

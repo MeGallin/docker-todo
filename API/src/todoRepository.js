@@ -1,3 +1,5 @@
+const { createFieldEncryption } = require("./encryption");
+
 const SORT_COLUMNS = {
   created: "created_at",
   updated: "updated_at",
@@ -9,61 +11,56 @@ const SORT_COLUMNS = {
     ELSE 1 END`,
 };
 
-const { createFieldEncryption } = require("./encryption");
-
 function serialize(row, encryption) {
   if (!row) return null;
 
   const tags = encryption.decrypt(row.tags || "[]");
-
   return {
-    id: row.id,
+    id: Number(row.id),
     title: encryption.decrypt(row.title),
     description: encryption.decrypt(row.description),
     status: row.status,
     priority: row.priority,
     category: encryption.decrypt(row.category),
     tags: JSON.parse(tags || "[]"),
-    dueDate: row.due_date,
-    createdAt: row.created_at,
-    updatedAt: row.updated_at,
-    completedAt: row.completed_at,
+    dueDate: formatDate(row.due_date),
+    createdAt: formatTimestamp(row.created_at),
+    updatedAt: formatTimestamp(row.updated_at),
+    completedAt: formatTimestamp(row.completed_at),
   };
 }
 
-function createTodoRepository(database, options = {}) {
+async function createTodoRepository(database, options = {}) {
   const encryption = createFieldEncryption(options.encryptionKey);
-  initializeEncryption(database, encryption);
+  await initializeEncryption(database, encryption);
 
-  function list(filters = {}) {
+  async function list(filters = {}) {
     const where = [];
-    const parameters = {};
+    const parameters = [];
 
     if (filters.status && filters.status !== "all") {
-      where.push("status = @status");
-      parameters.status = filters.status;
+      parameters.push(filters.status);
+      where.push(`status = $${parameters.length}`);
     }
-
     if (filters.priority && filters.priority !== "all") {
-      where.push("priority = @priority");
-      parameters.priority = filters.priority;
+      parameters.push(filters.priority);
+      where.push(`priority = $${parameters.length}`);
     }
 
     const orderColumn = SORT_COLUMNS[filters.sort] || SORT_COLUMNS.created;
     const orderDirection = filters.order === "asc" ? "ASC" : "DESC";
-    const nullsLast = filters.sort === "due" ? "due_date IS NULL ASC, " : "";
+    const nullsLast = filters.sort === "due" ? " NULLS LAST" : "";
     const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
-
-    let todos = database
-      .prepare(`SELECT * FROM todos ${clause} ORDER BY ${nullsLast}${orderColumn} ${orderDirection}, id DESC`)
-      .all(parameters)
-      .map((row) => serialize(row, encryption));
+    const result = await database.query(
+      `SELECT * FROM todos ${clause} ORDER BY ${orderColumn} ${orderDirection}${nullsLast}, id DESC`,
+      parameters
+    );
+    let todos = result.rows.map((row) => serialize(row, encryption));
 
     if (filters.category) {
       const category = filters.category.toLocaleLowerCase();
       todos = todos.filter((todo) => todo.category.toLocaleLowerCase() === category);
     }
-
     if (filters.search) {
       const search = filters.search.toLocaleLowerCase();
       todos = todos.filter((todo) => [
@@ -73,116 +70,113 @@ function createTodoRepository(database, options = {}) {
         todo.tags.join(" "),
       ].some((value) => value.toLocaleLowerCase().includes(search)));
     }
-
     return todos;
   }
 
-  function findById(id) {
-    return serialize(database.prepare("SELECT * FROM todos WHERE id = ?").get(id), encryption);
+  async function findById(id) {
+    const result = await database.query("SELECT * FROM todos WHERE id = $1", [id]);
+    return serialize(result.rows[0], encryption);
   }
 
-  function create(todo) {
-    const now = new Date().toISOString();
+  async function create(todo) {
+    const now = new Date();
     const completedAt = todo.status === "completed" ? now : null;
-    const result = database.prepare(`
+    const result = await database.query(`
       INSERT INTO todos (
         title, description, status, priority, category, tags,
         due_date, created_at, updated_at, completed_at
-      ) VALUES (
-        @title, @description, @status, @priority, @category, @tags,
-        @dueDate, @createdAt, @updatedAt, @completedAt
-      )
-    `).run({
-      ...todo,
-      title: encryption.encrypt(todo.title),
-      description: encryption.encrypt(todo.description),
-      category: encryption.encrypt(todo.category),
-      tags: encryption.encrypt(JSON.stringify(todo.tags)),
-      createdAt: now,
-      updatedAt: now,
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9)
+      RETURNING *
+    `, [
+      encryption.encrypt(todo.title),
+      encryption.encrypt(todo.description),
+      todo.status,
+      todo.priority,
+      encryption.encrypt(todo.category),
+      encryption.encrypt(JSON.stringify(todo.tags)),
+      todo.dueDate,
+      now,
       completedAt,
-    });
-
-    return findById(result.lastInsertRowid);
+    ]);
+    return serialize(result.rows[0], encryption);
   }
 
-  function update(id, changes) {
-    const existing = findById(id);
+  async function update(id, changes) {
+    const existing = await findById(id);
     if (!existing) return null;
 
     const next = { ...existing, ...changes };
-    const now = new Date().toISOString();
+    const now = new Date();
     const completedAt = next.status === "completed"
       ? existing.completedAt || now
       : null;
-
-    database.prepare(`
+    const result = await database.query(`
       UPDATE todos SET
-        title = @title,
-        description = @description,
-        status = @status,
-        priority = @priority,
-        category = @category,
-        tags = @tags,
-        due_date = @dueDate,
-        updated_at = @updatedAt,
-        completed_at = @completedAt
-      WHERE id = @id
-    `).run({
+        title = $2,
+        description = $3,
+        status = $4,
+        priority = $5,
+        category = $6,
+        tags = $7,
+        due_date = $8,
+        updated_at = $9,
+        completed_at = $10
+      WHERE id = $1
+      RETURNING *
+    `, [
       id,
-      title: encryption.encrypt(next.title),
-      description: encryption.encrypt(next.description),
-      status: next.status,
-      priority: next.priority,
-      category: encryption.encrypt(next.category),
-      tags: encryption.encrypt(JSON.stringify(next.tags)),
-      dueDate: next.dueDate,
-      updatedAt: now,
+      encryption.encrypt(next.title),
+      encryption.encrypt(next.description),
+      next.status,
+      next.priority,
+      encryption.encrypt(next.category),
+      encryption.encrypt(JSON.stringify(next.tags)),
+      next.dueDate,
+      now,
       completedAt,
-    });
-
-    return findById(id);
+    ]);
+    return serialize(result.rows[0], encryption);
   }
 
-  function remove(id) {
-    return database.prepare("DELETE FROM todos WHERE id = ?").run(id).changes > 0;
+  async function remove(id) {
+    const result = await database.query("DELETE FROM todos WHERE id = $1", [id]);
+    return result.rowCount > 0;
   }
 
-  function removeCompleted() {
-    return database.prepare("DELETE FROM todos WHERE status = 'completed'").run().changes;
+  async function removeCompleted() {
+    const result = await database.query("DELETE FROM todos WHERE status = 'completed'");
+    return result.rowCount;
   }
 
-  function stats() {
-    const counts = database.prepare(`
+  async function stats() {
+    const result = await database.query(`
       SELECT
         COUNT(*) AS total,
-        SUM(CASE WHEN status = 'todo' THEN 1 ELSE 0 END) AS todo,
-        SUM(CASE WHEN status = 'in_progress' THEN 1 ELSE 0 END) AS in_progress,
-        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) AS completed,
-        SUM(CASE WHEN status != 'completed' AND due_date IS NOT NULL AND due_date < @today THEN 1 ELSE 0 END) AS overdue,
-        SUM(CASE WHEN status != 'completed' AND priority = 'urgent' THEN 1 ELSE 0 END) AS urgent
+        COUNT(*) FILTER (WHERE status = 'todo') AS todo,
+        COUNT(*) FILTER (WHERE status = 'in_progress') AS in_progress,
+        COUNT(*) FILTER (WHERE status = 'completed') AS completed,
+        COUNT(*) FILTER (
+          WHERE status != 'completed' AND due_date IS NOT NULL AND due_date < CURRENT_DATE
+        ) AS overdue,
+        COUNT(*) FILTER (WHERE status != 'completed' AND priority = 'urgent') AS urgent
       FROM todos
-    `).get({ today: new Date().toISOString().slice(0, 10) });
-
+    `);
     return Object.fromEntries(
-      Object.entries(counts).map(([key, value]) => [key === "in_progress" ? "inProgress" : key, Number(value || 0)])
+      Object.entries(result.rows[0]).map(([key, value]) => [
+        key === "in_progress" ? "inProgress" : key,
+        Number(value || 0),
+      ])
     );
   }
 
   return { list, findById, create, update, remove, removeCompleted, stats };
 }
 
-function initializeEncryption(database, encryption) {
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS app_metadata (
-      key TEXT PRIMARY KEY,
-      value TEXT NOT NULL
-    );
-  `);
-
-  const storedCheck = database
-    .prepare("SELECT value FROM app_metadata WHERE key = 'encryption_key_check'")
-    .get();
+async function initializeEncryption(database, encryption) {
+  const checkResult = await database.query(
+    "SELECT value FROM app_metadata WHERE key = 'encryption_key_check'"
+  );
+  const storedCheck = checkResult.rows[0];
 
   if (storedCheck) {
     const value = encryption.decrypt(storedCheck.value);
@@ -190,33 +184,52 @@ function initializeEncryption(database, encryption) {
       throw new Error("TODO_ENCRYPTION_KEY does not match this database.");
     }
   } else {
-    database.prepare(`
-      INSERT INTO app_metadata (key, value)
-      VALUES ('encryption_key_check', ?)
-    `).run(encryption.encrypt(encryption.keyCheckValue));
+    await database.query(
+      "INSERT INTO app_metadata (key, value) VALUES ('encryption_key_check', $1)",
+      [encryption.encrypt(encryption.keyCheckValue)]
+    );
   }
 
-  const rows = database
-    .prepare("SELECT id, title, description, category, tags FROM todos")
-    .all();
-  const update = database.prepare(`
-    UPDATE todos
-    SET title = @title, description = @description, category = @category, tags = @tags
-    WHERE id = @id
-  `);
+  const result = await database.query("SELECT id, title, description, category, tags FROM todos");
+  const plaintextRows = result.rows.filter((row) => (
+    ![row.title, row.description, row.category, row.tags].every(encryption.isEncrypted)
+  ));
+  if (!plaintextRows.length) return;
 
-  database.transaction((items) => {
-    for (const row of items) {
-      if ([row.title, row.description, row.category, row.tags].every(encryption.isEncrypted)) continue;
-      update.run({
-        id: row.id,
-        title: encryption.encryptIfNeeded(row.title),
-        description: encryption.encryptIfNeeded(row.description),
-        category: encryption.encryptIfNeeded(row.category),
-        tags: encryption.encryptIfNeeded(row.tags),
-      });
+  const client = await database.connect();
+  try {
+    await client.query("BEGIN");
+    for (const row of plaintextRows) {
+      await client.query(`
+        UPDATE todos
+        SET title = $2, description = $3, category = $4, tags = $5
+        WHERE id = $1
+      `, [
+        row.id,
+        encryption.encryptIfNeeded(row.title),
+        encryption.encryptIfNeeded(row.description),
+        encryption.encryptIfNeeded(row.category),
+        encryption.encryptIfNeeded(row.tags),
+      ]);
     }
-  })(rows);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+function formatDate(value) {
+  if (!value) return null;
+  if (typeof value === "string") return value.slice(0, 10);
+  return value.toISOString().slice(0, 10);
+}
+
+function formatTimestamp(value) {
+  if (!value) return null;
+  return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
 }
 
 module.exports = { createTodoRepository };

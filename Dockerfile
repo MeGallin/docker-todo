@@ -18,15 +18,12 @@ RUN npm ci --omit=dev
 FROM node:22-bookworm-slim
 
 ENV NODE_ENV=production
-ENV DATA_DIR=/app/data
 WORKDIR /app
 
 COPY API/package*.json ./
 COPY --from=api-dependencies --chown=node:node /app/node_modules ./node_modules
 COPY --chown=node:node API/src ./src
 COPY --from=client-build --chown=node:node /client/dist ./public
-
-RUN mkdir -p /app/data && chown node:node /app/data
 
 USER node
 EXPOSE 10000

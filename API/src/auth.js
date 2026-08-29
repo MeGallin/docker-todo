@@ -6,7 +6,7 @@ const argon2 = require("argon2");
 const SESSION_HOURS = 12;
 const SAFE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
-function createAuthentication(database, options = {}) {
+async function createAuthentication(database, options = {}) {
   const passwordHash = options.passwordHash || process.env.APP_PASSWORD_HASH;
   if (!passwordHash || !passwordHash.startsWith("$argon2id$")) {
     throw new Error("APP_PASSWORD_HASH is required and must contain an Argon2id password hash.");
@@ -19,7 +19,7 @@ function createAuthentication(database, options = {}) {
     ? configuredHours
     : SESSION_HOURS;
 
-  initializeSessionStorage(database, passwordHash);
+  await initializeSessionStorage(database, passwordHash);
 
   const router = express.Router();
   const loginLimiter = rateLimit({
@@ -47,23 +47,21 @@ function createAuthentication(database, options = {}) {
     } catch {
       verified = false;
     }
-
     if (!verified) {
       return response.status(401).json({ error: "Password not recognised" });
     }
 
-    removeCurrentSession(database, request, cookieName);
-    database.prepare("DELETE FROM auth_sessions WHERE expires_at <= ?").run(new Date().toISOString());
+    await removeCurrentSession(database, request, cookieName);
+    await database.query("DELETE FROM auth_sessions WHERE expires_at <= NOW()");
 
     const sessionToken = crypto.randomBytes(32).toString("base64url");
     const csrfToken = crypto.randomBytes(32).toString("base64url");
     const createdAt = new Date();
     const expiresAt = new Date(createdAt.getTime() + sessionHours * 60 * 60 * 1000);
-
-    database.prepare(`
+    await database.query(`
       INSERT INTO auth_sessions (token_hash, csrf_token, created_at, expires_at)
-      VALUES (?, ?, ?, ?)
-    `).run(hashToken(sessionToken), csrfToken, createdAt.toISOString(), expiresAt.toISOString());
+      VALUES ($1, $2, $3, $4)
+    `, [hashToken(sessionToken), csrfToken, createdAt, expiresAt]);
 
     response.setHeader("Set-Cookie", buildSessionCookie(cookieName, sessionToken, secureCookies));
     response.setHeader("Cache-Control", "no-store");
@@ -74,37 +72,42 @@ function createAuthentication(database, options = {}) {
     response.json({ authenticated: true, csrfToken: request.authSession.csrf_token });
   });
 
-  router.post("/logout", authenticate, requireCsrf, (request, response) => {
-    database.prepare("DELETE FROM auth_sessions WHERE token_hash = ?").run(request.authTokenHash);
+  router.post("/logout", authenticate, requireCsrf, async (request, response) => {
+    await database.query("DELETE FROM auth_sessions WHERE token_hash = $1", [request.authTokenHash]);
     response.setHeader("Set-Cookie", clearSessionCookie(cookieName, secureCookies));
     response.setHeader("Clear-Site-Data", '"cache", "cookies"');
     return response.status(204).end();
   });
 
-  function authenticate(request, response, next) {
-    const sessionToken = readCookie(request, cookieName);
-    const tokenHash = sessionToken ? hashToken(sessionToken) : null;
-    const session = tokenHash
-      ? database.prepare(`
-          SELECT token_hash, csrf_token, created_at, expires_at
-          FROM auth_sessions
-          WHERE token_hash = ? AND expires_at > ?
-        `).get(tokenHash, new Date().toISOString())
-      : null;
+  async function authenticate(request, response, next) {
+    try {
+      const sessionToken = readCookie(request, cookieName);
+      const tokenHash = sessionToken ? hashToken(sessionToken) : null;
+      const result = tokenHash
+        ? await database.query(`
+            SELECT token_hash, csrf_token, created_at, expires_at
+            FROM auth_sessions
+            WHERE token_hash = $1 AND expires_at > NOW()
+          `, [tokenHash])
+        : { rows: [] };
+      const session = result.rows[0];
 
-    if (!session) {
-      if (sessionToken) {
-        database.prepare("DELETE FROM auth_sessions WHERE token_hash = ?").run(tokenHash);
-        response.setHeader("Set-Cookie", clearSessionCookie(cookieName, secureCookies));
+      if (!session) {
+        if (sessionToken) {
+          await database.query("DELETE FROM auth_sessions WHERE token_hash = $1", [tokenHash]);
+          response.setHeader("Set-Cookie", clearSessionCookie(cookieName, secureCookies));
+        }
+        response.setHeader("Cache-Control", "no-store");
+        return response.status(401).json({ error: "Authentication required" });
       }
-      response.setHeader("Cache-Control", "no-store");
-      return response.status(401).json({ error: "Authentication required" });
-    }
 
-    request.authSession = session;
-    request.authTokenHash = tokenHash;
-    response.setHeader("Cache-Control", "no-store");
-    return next();
+      request.authSession = session;
+      request.authTokenHash = tokenHash;
+      response.setHeader("Cache-Control", "no-store");
+      return next();
+    } catch (error) {
+      return next(error);
+    }
   }
 
   function requireCsrf(request, response, next) {
@@ -123,30 +126,20 @@ function createAuthentication(database, options = {}) {
   return { router, authenticate, requireCsrf };
 }
 
-function initializeSessionStorage(database, passwordHash) {
-  database.exec(`
-    CREATE TABLE IF NOT EXISTS auth_sessions (
-      token_hash TEXT PRIMARY KEY,
-      csrf_token TEXT NOT NULL,
-      created_at TEXT NOT NULL,
-      expires_at TEXT NOT NULL
-    );
-    CREATE INDEX IF NOT EXISTS idx_auth_sessions_expires_at ON auth_sessions(expires_at);
-  `);
-
+async function initializeSessionStorage(database, passwordHash) {
   const fingerprint = crypto.createHash("sha256").update(passwordHash).digest("hex");
-  const storedFingerprint = database
-    .prepare("SELECT value FROM app_metadata WHERE key = 'auth_password_fingerprint'")
-    .get();
-
+  const result = await database.query(
+    "SELECT value FROM app_metadata WHERE key = 'auth_password_fingerprint'"
+  );
+  const storedFingerprint = result.rows[0];
   if (storedFingerprint && storedFingerprint.value !== fingerprint) {
-    database.prepare("DELETE FROM auth_sessions").run();
+    await database.query("DELETE FROM auth_sessions");
   }
 
-  database.prepare(`
-    INSERT INTO app_metadata (key, value) VALUES ('auth_password_fingerprint', ?)
-    ON CONFLICT(key) DO UPDATE SET value = excluded.value
-  `).run(fingerprint);
+  await database.query(`
+    INSERT INTO app_metadata (key, value) VALUES ('auth_password_fingerprint', $1)
+    ON CONFLICT(key) DO UPDATE SET value = EXCLUDED.value
+  `, [fingerprint]);
 }
 
 function isSameOrigin(request) {
@@ -209,10 +202,10 @@ function clearSessionCookie(name, secure) {
   ].filter(Boolean).join("; ");
 }
 
-function removeCurrentSession(database, request, cookieName) {
+async function removeCurrentSession(database, request, cookieName) {
   const currentToken = readCookie(request, cookieName);
   if (currentToken) {
-    database.prepare("DELETE FROM auth_sessions WHERE token_hash = ?").run(hashToken(currentToken));
+    await database.query("DELETE FROM auth_sessions WHERE token_hash = $1", [hashToken(currentToken)]);
   }
 }
 
