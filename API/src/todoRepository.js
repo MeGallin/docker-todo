@@ -60,7 +60,8 @@ function createTodoRepository(database, options = {}) {
       .map((row) => serialize(row, encryption));
 
     if (filters.category) {
-      todos = todos.filter((todo) => todo.category === filters.category);
+      const category = filters.category.toLocaleLowerCase();
+      todos = todos.filter((todo) => todo.category.toLocaleLowerCase() === category);
     }
 
     if (filters.search) {

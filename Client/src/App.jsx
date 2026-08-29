@@ -41,16 +41,27 @@ const PRIORITY_LABELS = {
   urgent: "Urgent",
 };
 
+const DEFAULT_FILTERS = {
+  status: "all",
+  priority: "all",
+  category: "",
+  search: "",
+  sort: "created",
+  order: "desc",
+};
+
 function App() {
   const [todos, setTodos] = useState([]);
   const [stats, setStats] = useState({ total: 0, todo: 0, inProgress: 0, completed: 0, overdue: 0, urgent: 0 });
-  const [filters, setFilters] = useState({ status: "all", priority: "all", search: "", sort: "created", order: "desc" });
+  const [filters, setFilters] = useState(DEFAULT_FILTERS);
   const [draftSearch, setDraftSearch] = useState("");
+  const [view, setView] = useState("tasks");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [editing, setEditing] = useState(null);
   const [composerOpen, setComposerOpen] = useState(false);
+  const [confirmation, setConfirmation] = useState(null);
   const [theme, setTheme] = useState(() => {
     const saved = localStorage.getItem("docklist-theme");
     if (saved === "light" || saved === "dark") return saved;
@@ -89,7 +100,14 @@ function App() {
   }, [theme]);
 
   const completionRate = stats.total ? Math.round((stats.completed / stats.total) * 100) : 0;
-  const activeFilterCount = [filters.status, filters.priority].filter((value) => value !== "all").length;
+  const visibleTodos = view === "upcoming"
+    ? todos.filter((todo) => todo.status !== "completed" && todo.dueDate)
+    : todos;
+  const activeFilterCount = [
+    filters.status !== "all",
+    filters.priority !== "all",
+    Boolean(filters.category),
+  ].filter(Boolean).length;
 
   async function mutate(action) {
     setSaving(true);
@@ -119,6 +137,25 @@ function App() {
     return success;
   }
 
+  function selectView(nextView) {
+    setView(nextView);
+    setFilters((current) => ({
+      ...current,
+      status: nextView === "upcoming" ? "all" : current.status,
+      sort: nextView === "upcoming" ? "due" : "created",
+      order: nextView === "upcoming" ? "asc" : "desc",
+    }));
+  }
+
+  async function confirmDestructiveAction() {
+    if (!confirmation) return;
+    const action = confirmation.kind === "task"
+      ? () => api.deleteTodo(confirmation.todo.id)
+      : api.clearCompleted;
+    const success = await mutate(action);
+    if (success) setConfirmation(null);
+  }
+
   const todayText = useMemo(
     () => new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long" }).format(new Date()),
     []
@@ -129,8 +166,18 @@ function App() {
       <aside className="sidebar" aria-label="Application navigation">
         <div className="brand-mark" aria-hidden="true"><Check weight="bold" /></div>
         <nav>
-          <button className="nav-icon active" aria-label="Tasks"><ListChecks /></button>
-          <button className="nav-icon" aria-label="Upcoming" disabled><CalendarBlank /></button>
+          <button
+            className={`nav-icon ${view === "tasks" ? "active" : ""}`}
+            aria-label="Tasks"
+            aria-current={view === "tasks" ? "page" : undefined}
+            onClick={() => selectView("tasks")}
+          ><ListChecks /></button>
+          <button
+            className={`nav-icon ${view === "upcoming" ? "active" : ""}`}
+            aria-label="Upcoming"
+            aria-current={view === "upcoming" ? "page" : undefined}
+            onClick={() => selectView("upcoming")}
+          ><CalendarBlank /></button>
         </nav>
         <button
           className="nav-icon theme-button"
@@ -145,8 +192,12 @@ function App() {
         <header className="page-header">
           <div>
             <p className="date-line">{todayText}</p>
-            <h1>Make today count.</h1>
-            <p className="header-copy">Capture the work, choose what matters, and finish with focus.</p>
+            <h1>{view === "upcoming" ? "See what’s ahead." : "Make today count."}</h1>
+            <p className="header-copy">
+              {view === "upcoming"
+                ? "Review every active task with a due date, ordered from the nearest deadline."
+                : "Capture the work, choose what matters, and finish with focus."}
+            </p>
           </div>
           <button className="primary-button" onClick={() => setComposerOpen(true)}>
             <Plus weight="bold" /> Add task
@@ -171,11 +222,17 @@ function App() {
         <section className="task-section">
           <div className="task-heading">
             <div>
-              <h2>Your tasks</h2>
-              <p>{stats.total ? `${stats.total - stats.completed} still active` : "A clear list starts here"}</p>
+              <h2>{view === "upcoming" ? "Upcoming tasks" : "Your tasks"}</h2>
+              <p>{view === "upcoming"
+                ? `${visibleTodos.length} dated ${visibleTodos.length === 1 ? "task" : "tasks"}`
+                : stats.total ? `${stats.total - stats.completed} still active` : "A clear list starts here"}</p>
             </div>
             {stats.completed > 0 && (
-              <button className="text-button danger" disabled={saving} onClick={() => mutate(api.clearCompleted)}>
+              <button
+                className="text-button danger"
+                disabled={saving}
+                onClick={() => setConfirmation({ kind: "completed", count: stats.completed })}
+              >
                 <Trash /> Clear completed
               </button>
             )}
@@ -207,9 +264,21 @@ function App() {
                 <option value="low">Low</option>
               </select>
             </label>
+            <label className="filter-field">
+              <span className="sr-only">Filter by category</span>
+              <input
+                value={filters.category}
+                onChange={(event) => setFilters({ ...filters, category: event.target.value })}
+                placeholder="Category"
+                aria-label="Filter by category"
+              />
+            </label>
             <label>
               <span className="sr-only">Sort tasks</span>
-              <select value={filters.sort} onChange={(event) => setFilters({ ...filters, sort: event.target.value })}>
+              <select value={filters.sort} onChange={(event) => {
+                const sort = event.target.value;
+                setFilters({ ...filters, sort, order: sort === "due" ? "asc" : "desc" });
+              }}>
                 <option value="created">Recently added</option>
                 <option value="updated">Recently updated</option>
                 <option value="due">Due date</option>
@@ -228,23 +297,25 @@ function App() {
 
           {loading ? (
             <TaskSkeleton />
-          ) : todos.length ? (
+          ) : visibleTodos.length ? (
             <div className="task-list">
-              {todos.map((todo) => (
+              {visibleTodos.map((todo) => (
                 <TaskRow
                   key={todo.id}
                   todo={todo}
                   disabled={saving}
                   onToggle={() => mutate(() => api.toggleTodo(todo.id))}
                   onEdit={() => setEditing(todo)}
-                  onDelete={() => mutate(() => api.deleteTodo(todo.id))}
+                  onDelete={() => setConfirmation({ kind: "task", todo })}
                 />
               ))}
             </div>
           ) : (
-            <EmptyState filtered={Boolean(draftSearch || activeFilterCount)} onAdd={() => setComposerOpen(true)} onReset={() => {
+            <EmptyState upcoming={view === "upcoming"} filtered={Boolean(draftSearch || activeFilterCount)} onAdd={() => setComposerOpen(true)} onReset={() => {
               setDraftSearch("");
-              setFilters({ status: "all", priority: "all", search: "", sort: "created", order: "desc" });
+              setFilters(view === "upcoming"
+                ? { ...DEFAULT_FILTERS, sort: "due", order: "asc" }
+                : DEFAULT_FILTERS);
             }} />
           )}
         </section>
@@ -257,6 +328,14 @@ function App() {
           saving={saving}
           onClose={() => { setComposerOpen(false); setEditing(null); }}
           onSave={editing ? updateTask : createTask}
+        />
+      )}
+      {confirmation && (
+        <ConfirmDialog
+          confirmation={confirmation}
+          saving={saving}
+          onCancel={() => setConfirmation(null)}
+          onConfirm={confirmDestructiveAction}
         />
       )}
     </div>
@@ -305,12 +384,19 @@ function TaskRow({ todo, disabled, onToggle, onEdit, onDelete }) {
   );
 }
 
-function EmptyState({ filtered, onAdd, onReset }) {
+function EmptyState({ filtered, upcoming, onAdd, onReset }) {
+  const heading = filtered ? "No tasks match" : upcoming ? "Nothing due yet" : "Your list is ready";
+  const copy = filtered
+    ? "Try changing the search or filters."
+    : upcoming
+      ? "Add a due date to an active task and it will appear here."
+      : "Add your first task and give today a clear direction.";
+
   return (
     <div className="empty-state">
       <span className="empty-icon">{filtered ? <MagnifyingGlass /> : <ListChecks />}</span>
-      <h3>{filtered ? "No tasks match" : "Your list is ready"}</h3>
-      <p>{filtered ? "Try changing the search or filters." : "Add your first task and give today a clear direction."}</p>
+      <h3>{heading}</h3>
+      <p>{copy}</p>
       <button className="secondary-button" onClick={filtered ? onReset : onAdd}>{filtered ? "Reset filters" : "Add first task"}</button>
     </div>
   );
@@ -376,12 +462,44 @@ function TaskDialog({ task, mode, saving, onClose, onSave }) {
           <div className="form-grid">
             <label className="field-block"><span>Status</span><select value={form.status} onChange={(event) => update("status", event.target.value)}><option value="todo">To do</option><option value="in_progress">In progress</option><option value="completed">Completed</option></select></label>
             <label className="field-block"><span>Priority</span><select value={form.priority} onChange={(event) => update("priority", event.target.value)}><option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option><option value="urgent">Urgent</option></select></label>
-            <label className="field-block"><span>Due date</span><input type="date" value={form.dueDate} onChange={(event) => update("dueDate", event.target.value)} /></label>
+            <label className="field-block"><span>Due date</span><input type="date" value={form.dueDate} onInput={(event) => update("dueDate", event.currentTarget.value)} onChange={(event) => update("dueDate", event.currentTarget.value)} /></label>
             <label className="field-block"><span>Category</span><input value={form.category} maxLength="80" onChange={(event) => update("category", event.target.value)} placeholder="Work, personal, launch" /></label>
           </div>
           <label className="field-block"><span>Tags</span><input value={tagText} onChange={(event) => setTagText(event.target.value)} placeholder="docker, render, backend" /><small>Separate tags with commas.</small></label>
           <div className="dialog-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button" disabled={saving}>{saving ? "Saving" : mode === "edit" ? "Save changes" : "Add task"}</button></div>
         </form>
+      </section>
+    </div>
+  );
+}
+
+function ConfirmDialog({ confirmation, saving, onCancel, onConfirm }) {
+  const isSingleTask = confirmation.kind === "task";
+  const title = isSingleTask ? "Delete this task?" : "Clear completed tasks?";
+  const description = isSingleTask
+    ? `“${confirmation.todo.title}” will be permanently removed.`
+    : `${confirmation.count} completed ${confirmation.count === 1 ? "task" : "tasks"} will be permanently removed.`;
+
+  useEffect(() => {
+    function closeOnEscape(event) {
+      if (event.key === "Escape" && !saving) onCancel();
+    }
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [onCancel, saving]);
+
+  return (
+    <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && !saving && onCancel()}>
+      <section className="confirm-dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title" aria-describedby="confirm-description">
+        <span className="confirm-icon" aria-hidden="true"><Trash /></span>
+        <h2 id="confirm-title">{title}</h2>
+        <p id="confirm-description">{description}</p>
+        <div className="dialog-actions">
+          <button className="secondary-button" disabled={saving} onClick={onCancel}>Keep {isSingleTask ? "task" : "tasks"}</button>
+          <button className="danger-button" disabled={saving} onClick={onConfirm}>
+            {saving ? "Deleting" : isSingleTask ? "Delete task" : "Clear completed"}
+          </button>
+        </div>
       </section>
     </div>
   );

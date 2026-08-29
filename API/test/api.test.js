@@ -48,6 +48,9 @@ test("creates, lists, updates, toggles, and deletes a task", async () => {
   const listed = await request(app).get("/api/todos?priority=high&search=Docker").expect(200);
   assert.equal(listed.body.todos.length, 1);
 
+  const categoryFiltered = await request(app).get("/api/todos?category=launch").expect(200);
+  assert.equal(categoryFiltered.body.todos.length, 1);
+
   const updated = await request(app)
     .patch(`/api/todos/${created.body.todo.id}`)
     .send({ status: "in_progress" })
@@ -65,6 +68,26 @@ test("creates, lists, updates, toggles, and deletes a task", async () => {
 
   await request(app).delete(`/api/todos/${created.body.todo.id}`).expect(204);
   await request(app).get(`/api/todos/${created.body.todo.id}`).expect(404);
+  database.close();
+});
+
+test("sorts dated tasks from nearest to latest with undated tasks last", async () => {
+  const { app, database } = setup();
+  const tasks = [
+    { title: "Later task", dueDate: "2026-09-10" },
+    { title: "Undated task", dueDate: null },
+    { title: "Sooner task", dueDate: "2026-09-02" },
+  ];
+
+  for (const task of tasks) {
+    await request(app).post("/api/todos").send(task).expect(201);
+  }
+
+  const response = await request(app).get("/api/todos?sort=due&order=asc").expect(200);
+  assert.deepEqual(
+    response.body.todos.map((todo) => todo.title),
+    ["Sooner task", "Later task", "Undated task"]
+  );
   database.close();
 });
 

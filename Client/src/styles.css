@@ -169,7 +169,7 @@ h1 {
   line-height: 1.55;
 }
 
-.primary-button, .secondary-button, .text-button {
+.primary-button, .secondary-button, .danger-button, .text-button {
   min-height: 42px;
   display: inline-flex;
   align-items: center;
@@ -189,7 +189,7 @@ h1 {
 }
 
 .primary-button:hover { background: var(--accent-strong); border-color: var(--accent-strong); }
-.primary-button:active, .secondary-button:active, .text-button:active { transform: translateY(1px); }
+.primary-button:active, .secondary-button:active, .danger-button:active, .text-button:active { transform: translateY(1px); }
 
 .secondary-button {
   padding: 0 16px;
@@ -198,6 +198,18 @@ h1 {
 }
 
 .secondary-button:hover { border-color: var(--accent); color: var(--accent-strong); }
+
+.danger-button {
+  min-height: 42px;
+  padding: 0 17px;
+  border: 1px solid var(--danger);
+  border-radius: var(--radius-control);
+  background: var(--danger);
+  color: #fff;
+  font-weight: 750;
+}
+
+.danger-button:hover { filter: brightness(0.92); }
 
 .text-button {
   min-height: 36px;
@@ -282,12 +294,12 @@ h1 {
 
 .toolbar {
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) repeat(3, minmax(135px, auto));
+  grid-template-columns: minmax(210px, 1fr) repeat(4, minmax(125px, auto));
   gap: 10px;
   margin-bottom: 16px;
 }
 
-.toolbar select, .search-field, .field-block input, .field-block textarea, .field-block select {
+.toolbar select, .filter-field input, .search-field, .field-block input, .field-block textarea, .field-block select {
   width: 100%;
   border: 1px solid var(--border);
   border-radius: var(--radius-control);
@@ -295,7 +307,9 @@ h1 {
   color: var(--text);
 }
 
-.toolbar select { height: 44px; padding: 0 34px 0 12px; }
+.toolbar select, .filter-field input { height: 44px; padding: 0 12px; }
+.toolbar select { padding-right: 34px; }
+.filter-field input::placeholder { color: var(--text-muted); }
 
 .search-field {
   min-height: 44px;
@@ -306,7 +320,7 @@ h1 {
   color: var(--text-muted);
 }
 
-.search-field:focus-within, .toolbar select:focus, .field-block input:focus, .field-block textarea:focus, .field-block select:focus {
+.search-field:focus-within, .toolbar select:focus, .filter-field input:focus, .field-block input:focus, .field-block textarea:focus, .field-block select:focus {
   border-color: var(--accent);
 }
 
@@ -449,6 +463,32 @@ h1 {
   animation: dialog-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 
+.confirm-dialog {
+  width: min(440px, 100%);
+  padding: 26px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  background: var(--surface-raised);
+  box-shadow: var(--shadow);
+  animation: dialog-in 180ms cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.confirm-icon {
+  width: 46px;
+  height: 46px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 18px;
+  border-radius: 12px;
+  background: var(--danger-soft);
+  color: var(--danger);
+  font-size: 23px;
+}
+
+.confirm-dialog h2 { margin-bottom: 8px; }
+.confirm-dialog p { margin-bottom: 24px; color: var(--text-muted); line-height: 1.55; }
+.confirm-dialog .dialog-actions { margin-top: 0; }
+
 .dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 24px 24px 18px; }
 .dialog-header h2 { margin-bottom: 5px; }
 .dialog-header p { margin-bottom: 0; color: var(--text-muted); font-size: 0.9rem; }
@@ -505,6 +545,7 @@ h1 {
   .form-grid { grid-template-columns: 1fr; }
   .dialog-backdrop { align-items: end; padding: 0; }
   .task-dialog { width: 100%; max-height: 92dvh; border-radius: 16px 16px 0 0; }
+  .confirm-dialog { width: 100%; border-radius: 16px 16px 0 0; }
 }
 
 @media (prefers-reduced-motion: reduce) {
