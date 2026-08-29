@@ -128,7 +128,62 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
 }
 
 .nav-icon:not(:disabled):active { transform: translateY(1px); }
-.theme-button { margin-top: auto; }
+.sidebar-actions { margin-top: auto; display: grid; gap: 10px; }
+.theme-button { margin-top: 0; }
+
+.auth-screen {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(circle at 18% 14%, color-mix(in srgb, var(--accent-soft) 75%, transparent), transparent 34%),
+    var(--bg);
+}
+
+.auth-card {
+  width: min(430px, 100%);
+  padding: 38px;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: var(--surface-raised);
+  box-shadow: var(--shadow);
+}
+
+.auth-mark {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 28px;
+  border-radius: 13px;
+  background: var(--accent);
+  color: #f7fff9;
+  font-size: 23px;
+}
+
+.auth-eyebrow {
+  margin-bottom: 8px;
+  color: var(--accent-strong);
+  font-size: 0.78rem;
+  font-weight: 750;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.auth-card h1 {
+  margin-bottom: 11px;
+  font-size: clamp(2.3rem, 8vw, 3.7rem);
+}
+
+.auth-copy { margin-bottom: 28px; color: var(--text-muted); }
+.auth-card form { display: grid; gap: 14px; }
+.auth-card form .primary-button { width: 100%; margin-top: 3px; }
+.auth-card > small { display: block; margin-top: 22px; color: var(--text-muted); line-height: 1.5; }
+.auth-error { margin: -2px 0 0; color: var(--danger); font-size: 0.84rem; font-weight: 650; }
+.auth-loading { display: grid; justify-items: center; text-align: center; }
+.auth-loading .auth-mark { margin-bottom: 18px; }
+.auth-loading p { margin-bottom: 0; color: var(--text-muted); }
 
 .workspace {
   width: min(1180px, 100%);
@@ -527,7 +582,7 @@ h1 {
   }
   .brand-mark { display: none; }
   .sidebar nav { display: flex; }
-  .theme-button { margin: 0 0 0 auto; }
+  .sidebar-actions { margin: 0 0 0 auto; display: flex; gap: 4px; }
   .workspace { width: 100%; padding: 30px 16px 100px; }
   .page-header { display: grid; align-items: start; gap: 22px; }
   .page-header .primary-button { width: 100%; }
@@ -546,6 +601,8 @@ h1 {
   .dialog-backdrop { align-items: end; padding: 0; }
   .task-dialog { width: 100%; max-height: 92dvh; border-radius: 16px 16px 0 0; }
   .confirm-dialog { width: 100%; border-radius: 16px 16px 0 0; }
+  .auth-screen { padding: 16px; }
+  .auth-card { padding: 28px 22px; border-radius: 18px; }
 }
 
 @media (prefers-reduced-motion: reduce) {

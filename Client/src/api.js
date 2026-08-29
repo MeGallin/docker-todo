@@ -1,12 +1,18 @@
 const configuredApiUrl = import.meta.env.VITE_API_BASE_URL?.trim();
 const defaultApiUrl = import.meta.env.PROD ? window.location.origin : "http://localhost:10000";
 const API_BASE_URL = (configuredApiUrl || defaultApiUrl).replace(/\/$/, "");
+let csrfToken = null;
 
-async function request(path, options = {}) {
+async function request(path, options = {}, behavior = {}) {
+  const method = (options.method || "GET").toUpperCase();
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...options,
+    credentials: "include",
     headers: {
       "Content-Type": "application/json",
+      ...(!["GET", "HEAD", "OPTIONS"].includes(method) && csrfToken
+        ? { "X-CSRF-Token": csrfToken }
+        : {}),
       ...options.headers,
     },
   });
@@ -17,12 +23,43 @@ async function request(path, options = {}) {
   if (!response.ok) {
     const error = new Error(body.error || "The server could not complete the request");
     error.fields = body.fields || {};
+    error.status = response.status;
+    if (response.status === 401 && !behavior.suppressUnauthorized) {
+      csrfToken = null;
+      window.dispatchEvent(new Event("docklist:unauthorized"));
+    }
     throw error;
   }
   return body;
 }
 
 export const api = {
+  async getSession() {
+    try {
+      const result = await request("/api/auth/session", {}, { suppressUnauthorized: true });
+      csrfToken = result.csrfToken;
+      return result;
+    } catch (error) {
+      if (error.status === 401) {
+        csrfToken = null;
+        return { authenticated: false };
+      }
+      throw error;
+    }
+  },
+  async login(password) {
+    const result = await request(
+      "/api/auth/login",
+      { method: "POST", body: JSON.stringify({ password }) },
+      { suppressUnauthorized: true }
+    );
+    csrfToken = result.csrfToken;
+    return result;
+  },
+  async logout() {
+    await request("/api/auth/logout", { method: "POST" });
+    csrfToken = null;
+  },
   getTodos(query = {}) {
     const parameters = new URLSearchParams(
       Object.entries(query).filter(([, value]) => value !== undefined && value !== "" && value !== "all")

@@ -7,11 +7,13 @@ import {
   Circle,
   ClockCountdown,
   ListChecks,
+  LockKey,
   MagnifyingGlass,
   Moon,
   NotePencil,
   Plus,
   Sun,
+  SignOut,
   Trash,
   Warning,
   X,
@@ -62,6 +64,9 @@ function App() {
   const [editing, setEditing] = useState(null);
   const [composerOpen, setComposerOpen] = useState(false);
   const [confirmation, setConfirmation] = useState(null);
+  const [authStatus, setAuthStatus] = useState("loading");
+  const [authError, setAuthError] = useState("");
+  const [authenticating, setAuthenticating] = useState(false);
   const [theme, setTheme] = useState(() => {
     const saved = localStorage.getItem("docklist-theme");
     if (saved === "light" || saved === "dark") return saved;
@@ -76,6 +81,7 @@ function App() {
       setTodos(todoResult.todos);
       setStats(statsResult.stats);
     } catch (requestError) {
+      if (requestError.status === 401) setAuthStatus("unauthenticated");
       setError(requestError.message);
     } finally {
       setLoading(false);
@@ -90,8 +96,33 @@ function App() {
   }, [draftSearch]);
 
   useEffect(() => {
-    loadData();
-  }, [loadData]);
+    if (authStatus === "authenticated") loadData();
+  }, [authStatus, loadData]);
+
+  useEffect(() => {
+    let active = true;
+    api.getSession()
+      .then((session) => {
+        if (active) setAuthStatus(session.authenticated ? "authenticated" : "unauthenticated");
+      })
+      .catch(() => {
+        if (active) {
+          setAuthError("The login service could not be reached. Try again.");
+          setAuthStatus("unauthenticated");
+        }
+      });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    function handleUnauthorized() {
+      setTodos([]);
+      setStats({ total: 0, todo: 0, inProgress: 0, completed: 0, overdue: 0, urgent: 0 });
+      setAuthStatus("unauthenticated");
+    }
+    window.addEventListener("docklist:unauthorized", handleUnauthorized);
+    return () => window.removeEventListener("docklist:unauthorized", handleUnauthorized);
+  }, []);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -117,6 +148,7 @@ function App() {
       await loadData();
       return true;
     } catch (requestError) {
+      if (requestError.status === 401) setAuthStatus("unauthenticated");
       setError(requestError.message);
       return false;
     } finally {
@@ -156,10 +188,48 @@ function App() {
     if (success) setConfirmation(null);
   }
 
+  async function login(password) {
+    setAuthenticating(true);
+    setAuthError("");
+    try {
+      await api.login(password);
+      setAuthStatus("authenticated");
+      return true;
+    } catch (requestError) {
+      setAuthError(requestError.message);
+      return false;
+    } finally {
+      setAuthenticating(false);
+    }
+  }
+
+  async function logout() {
+    setSaving(true);
+    setError("");
+    try {
+      await api.logout();
+      setTodos([]);
+      setStats({ total: 0, todo: 0, inProgress: 0, completed: 0, overdue: 0, urgent: 0 });
+      setAuthStatus("unauthenticated");
+    } catch (requestError) {
+      setError(requestError.message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
   const todayText = useMemo(
     () => new Intl.DateTimeFormat("en-GB", { weekday: "long", day: "numeric", month: "long" }).format(new Date()),
     []
   );
+
+  if (authStatus === "loading") {
+    return <AuthLoading theme={theme} />;
+  }
+
+  if (authStatus === "unauthenticated") {
+    return <LoginScreen theme={theme} error={authError} authenticating={authenticating} onLogin={login} />;
+  }
 
   return (
     <div className="app-shell">
@@ -179,13 +249,16 @@ function App() {
             onClick={() => selectView("upcoming")}
           ><CalendarBlank /></button>
         </nav>
-        <button
-          className="nav-icon theme-button"
-          aria-label={`Use ${theme === "dark" ? "light" : "dark"} theme`}
-          onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
-        >
-          {theme === "dark" ? <Sun /> : <Moon />}
-        </button>
+        <div className="sidebar-actions">
+          <button className="nav-icon" aria-label="Log out" disabled={saving} onClick={logout}><SignOut /></button>
+          <button
+            className="nav-icon theme-button"
+            aria-label={`Use ${theme === "dark" ? "light" : "dark"} theme`}
+            onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
+          >
+            {theme === "dark" ? <Sun /> : <Moon />}
+          </button>
+        </div>
       </aside>
 
       <main className="workspace">
@@ -348,6 +421,57 @@ function Stat({ label, value, icon, tone = "default" }) {
       <span className="stat-icon">{icon}</span>
       <div><strong>{value}</strong><span>{label}</span></div>
     </div>
+  );
+}
+
+function AuthLoading() {
+  return (
+    <main className="auth-screen" aria-label="Checking login">
+      <div className="auth-card auth-loading">
+        <span className="auth-mark" aria-hidden="true"><LockKey weight="fill" /></span>
+        <p>Checking your secure session…</p>
+      </div>
+    </main>
+  );
+}
+
+function LoginScreen({ error, authenticating, onLogin }) {
+  const [password, setPassword] = useState("");
+
+  async function submit(event) {
+    event.preventDefault();
+    if (!password) return;
+    const success = await onLogin(password);
+    if (!success) setPassword("");
+  }
+
+  return (
+    <main className="auth-screen">
+      <section className="auth-card" aria-labelledby="login-title">
+        <span className="auth-mark" aria-hidden="true"><LockKey weight="fill" /></span>
+        <p className="auth-eyebrow">Private workspace</p>
+        <h1 id="login-title">Welcome back.</h1>
+        <p className="auth-copy">Enter your password to open Docklist.</p>
+        <form onSubmit={submit}>
+          <label className="field-block">
+            <span>Password</span>
+            <input
+              autoFocus
+              type="password"
+              autoComplete="current-password"
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              aria-invalid={Boolean(error)}
+            />
+          </label>
+          {error && <p className="auth-error" role="alert">{error}</p>}
+          <button className="primary-button" disabled={authenticating || !password}>
+            {authenticating ? "Signing in…" : "Sign in"}
+          </button>
+        </form>
+        <small>Protected with an encrypted session cookie. Your password is never stored here.</small>
+      </section>
+    </main>
   );
 }
 

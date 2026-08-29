@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const request = require("supertest");
+const argon2 = require("argon2");
 const { createApp } = require("../src/app");
 const { createDatabase } = require("../src/database");
 
@@ -10,7 +11,7 @@ function setup() {
   const database = createDatabase({ filename: ":memory:" });
   return {
     database,
-    app: createApp(database, { encryptionKey: TEST_ENCRYPTION_KEY }),
+    app: createApp(database, { encryptionKey: TEST_ENCRYPTION_KEY, disableAuthentication: true }),
   };
 }
 
@@ -101,7 +102,7 @@ test("encrypts existing plaintext tasks when encryption is enabled", async () =>
     ) VALUES (?, ?, 'todo', 'medium', ?, ?, NULL, ?, ?, NULL)
   `).run("Existing task", "Private notes", "Personal", '["legacy"]', now, now);
 
-  const app = createApp(database, { encryptionKey: TEST_ENCRYPTION_KEY });
+  const app = createApp(database, { encryptionKey: TEST_ENCRYPTION_KEY, disableAuthentication: true });
   const stored = database.prepare("SELECT title, description, category, tags FROM todos").get();
   Object.values(stored).forEach((value) => assert.match(value, /^enc:v1:/));
 
@@ -122,5 +123,66 @@ test("rejects invalid task data", async () => {
   assert.equal(response.body.fields.title, "This field is required");
   assert.ok(response.body.fields.priority);
   assert.ok(response.body.fields.dueDate);
+  database.close();
+});
+
+test("protects the API with a login session and CSRF token", async () => {
+  const password = "correct horse battery staple";
+  const passwordHash = await argon2.hash(password, {
+    type: argon2.argon2id,
+    memoryCost: 8192,
+    timeCost: 1,
+    parallelism: 1,
+  });
+  const database = createDatabase({ filename: ":memory:" });
+  const app = createApp(database, {
+    encryptionKey: TEST_ENCRYPTION_KEY,
+    passwordHash,
+    secureCookies: false,
+  });
+
+  await request(app).get("/api/todos").expect(401);
+  await request(app).post("/api/auth/login").send({ password: "wrong password" }).expect(401);
+
+  const login = await request(app)
+    .post("/api/auth/login")
+    .send({ password })
+    .expect(200);
+  const cookieHeader = login.headers["set-cookie"][0];
+  const sessionCookie = cookieHeader.split(";")[0];
+  assert.equal(login.body.authenticated, true);
+  assert.ok(login.body.csrfToken);
+  assert.match(cookieHeader, /HttpOnly/);
+  assert.match(cookieHeader, /SameSite=Strict/);
+
+  await request(app).get("/api/todos").set("Cookie", sessionCookie).expect(200);
+  await request(app)
+    .post("/api/todos")
+    .set("Cookie", sessionCookie)
+    .send({ title: "Missing CSRF" })
+    .expect(403);
+
+  await request(app)
+    .post("/api/todos")
+    .set("Cookie", sessionCookie)
+    .set("X-CSRF-Token", login.body.csrfToken)
+    .send({ title: "Authenticated task" })
+    .expect(201);
+
+  const session = await request(app)
+    .get("/api/auth/session")
+    .set("Cookie", sessionCookie)
+    .expect(200);
+  assert.equal(session.body.csrfToken, login.body.csrfToken);
+
+  const logout = await request(app)
+    .post("/api/auth/logout")
+    .set("Cookie", sessionCookie)
+    .set("X-CSRF-Token", login.body.csrfToken)
+    .expect(204);
+  assert.match(logout.headers["set-cookie"][0], /Max-Age=0/);
+  assert.equal(database.prepare("SELECT COUNT(*) AS count FROM auth_sessions").get().count, 0);
+
+  await request(app).get("/api/todos").set("Cookie", sessionCookie).expect(401);
   database.close();
 });

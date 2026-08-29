@@ -2,7 +2,9 @@ const express = require("express");
 const cors = require("cors");
 const fs = require("node:fs");
 const path = require("node:path");
+const helmet = require("helmet");
 const { createTodoRepository } = require("./todoRepository");
+const { createAuthentication } = require("./auth");
 const { ValidationError, validateTodo, STATUSES, PRIORITIES } = require("./validation");
 
 function createCorsOptions(request, callback) {
@@ -21,7 +23,10 @@ function createCorsOptions(request, callback) {
     }
   }
 
-  callback(null, { origin: !origin || sameHost || allowed.has(origin) });
+  callback(null, {
+    origin: !origin || sameHost || allowed.has(origin),
+    credentials: true,
+  });
 }
 
 function createApp(database, options = {}) {
@@ -33,7 +38,11 @@ function createApp(database, options = {}) {
   const clientEntry = path.join(publicDirectory, "index.html");
   const hasClient = fs.existsSync(clientEntry);
 
+  app.set("trust proxy", 1);
   app.disable("x-powered-by");
+  app.use(helmet({
+    strictTransportSecurity: process.env.NODE_ENV === "production" ? undefined : false,
+  }));
   app.use(cors(createCorsOptions));
   app.use(express.json({ limit: "32kb" }));
   if (hasClient) app.use(express.static(publicDirectory));
@@ -42,6 +51,16 @@ function createApp(database, options = {}) {
     database.prepare("SELECT 1").get();
     response.status(200).json({ status: "ok", database: "connected" });
   });
+
+  if (!options.disableAuthentication) {
+    const authentication = createAuthentication(database, {
+      passwordHash: options.passwordHash,
+      secureCookies: options.secureCookies,
+      sessionHours: options.sessionHours,
+    });
+    app.use("/api/auth", authentication.router);
+    app.use("/api", authentication.authenticate, authentication.requireCsrf);
+  }
 
   app.get("/api", (_request, response) => {
     response.json({
