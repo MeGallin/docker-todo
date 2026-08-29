@@ -251,6 +251,15 @@ function App() {
         </nav>
         <div className="sidebar-actions">
           <button
+            className="nav-icon"
+            aria-label="Log out"
+            title="Log out"
+            disabled={saving}
+            onClick={logout}
+          >
+            <SignOut weight="bold" />
+          </button>
+          <button
             className="nav-icon theme-button"
             aria-label={`Use ${theme === "dark" ? "light" : "dark"} theme`}
             onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
@@ -272,9 +281,6 @@ function App() {
             </p>
           </div>
           <div className="header-actions">
-            <button className="secondary-button" disabled={saving} onClick={logout}>
-              <SignOut weight="bold" /> Log out
-            </button>
             <button className="primary-button" onClick={() => setComposerOpen(true)}>
               <Plus weight="bold" /> Add task
             </button>
