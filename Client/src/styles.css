@@ -198,6 +198,13 @@ button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-
   gap: 36px;
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
 .date-line {
   margin: 0 0 8px;
   color: var(--accent-strong);
@@ -585,7 +592,8 @@ h1 {
   .sidebar-actions { margin: 0 0 0 auto; display: flex; gap: 4px; }
   .workspace { width: 100%; padding: 30px 16px 100px; }
   .page-header { display: grid; align-items: start; gap: 22px; }
-  .page-header .primary-button { width: 100%; }
+  .header-actions { width: 100%; display: grid; grid-template-columns: 1fr 1fr; }
+  .header-actions .primary-button, .header-actions .secondary-button { width: 100%; }
   h1 { font-size: clamp(2.35rem, 13vw, 3.7rem); }
   .summary-grid { grid-template-columns: 1fr 1fr; margin: 34px 0 42px; }
   .progress-panel { min-height: 128px; padding: 18px; }

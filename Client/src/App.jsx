@@ -250,7 +250,6 @@ function App() {
           ><CalendarBlank /></button>
         </nav>
         <div className="sidebar-actions">
-          <button className="nav-icon" aria-label="Log out" disabled={saving} onClick={logout}><SignOut /></button>
           <button
             className="nav-icon theme-button"
             aria-label={`Use ${theme === "dark" ? "light" : "dark"} theme`}
@@ -272,9 +271,14 @@ function App() {
                 : "Capture the work, choose what matters, and finish with focus."}
             </p>
           </div>
-          <button className="primary-button" onClick={() => setComposerOpen(true)}>
-            <Plus weight="bold" /> Add task
-          </button>
+          <div className="header-actions">
+            <button className="secondary-button" disabled={saving} onClick={logout}>
+              <SignOut weight="bold" /> Log out
+            </button>
+            <button className="primary-button" onClick={() => setComposerOpen(true)}>
+              <Plus weight="bold" /> Add task
+            </button>
+          </div>
         </header>
 
         <section className="summary-grid" aria-label="Task summary">
