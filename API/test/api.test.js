@@ -4,9 +4,14 @@ const request = require("supertest");
 const { createApp } = require("../src/app");
 const { createDatabase } = require("../src/database");
 
+const TEST_ENCRYPTION_KEY = Buffer.alloc(32, 7).toString("base64");
+
 function setup() {
   const database = createDatabase({ filename: ":memory:" });
-  return { database, app: createApp(database) };
+  return {
+    database,
+    app: createApp(database, { encryptionKey: TEST_ENCRYPTION_KEY }),
+  };
 }
 
 test("health checks both the service and database", async () => {
@@ -34,6 +39,12 @@ test("creates, lists, updates, toggles, and deletes a task", async () => {
   assert.equal(created.body.todo.title, "Ship the Docker prototype");
   assert.deepEqual(created.body.todo.tags, ["docker", "render"]);
 
+  const stored = database.prepare("SELECT title, description, category, tags FROM todos").get();
+  for (const value of Object.values(stored)) {
+    assert.match(value, /^enc:v1:/);
+    assert.equal(value.includes("Docker"), false);
+  }
+
   const listed = await request(app).get("/api/todos?priority=high&search=Docker").expect(200);
   assert.equal(listed.body.todos.length, 1);
 
@@ -54,6 +65,27 @@ test("creates, lists, updates, toggles, and deletes a task", async () => {
 
   await request(app).delete(`/api/todos/${created.body.todo.id}`).expect(204);
   await request(app).get(`/api/todos/${created.body.todo.id}`).expect(404);
+  database.close();
+});
+
+test("encrypts existing plaintext tasks when encryption is enabled", async () => {
+  const database = createDatabase({ filename: ":memory:" });
+  const now = new Date().toISOString();
+  database.prepare(`
+    INSERT INTO todos (
+      title, description, status, priority, category, tags,
+      due_date, created_at, updated_at, completed_at
+    ) VALUES (?, ?, 'todo', 'medium', ?, ?, NULL, ?, ?, NULL)
+  `).run("Existing task", "Private notes", "Personal", '["legacy"]', now, now);
+
+  const app = createApp(database, { encryptionKey: TEST_ENCRYPTION_KEY });
+  const stored = database.prepare("SELECT title, description, category, tags FROM todos").get();
+  Object.values(stored).forEach((value) => assert.match(value, /^enc:v1:/));
+
+  const response = await request(app).get("/api/todos?search=private&category=Personal").expect(200);
+  assert.equal(response.body.todos.length, 1);
+  assert.equal(response.body.todos[0].title, "Existing task");
+  assert.equal(response.body.todos[0].description, "Private notes");
   database.close();
 });
 

@@ -9,17 +9,21 @@ const SORT_COLUMNS = {
     ELSE 1 END`,
 };
 
-function serialize(row) {
+const { createFieldEncryption } = require("./encryption");
+
+function serialize(row, encryption) {
   if (!row) return null;
+
+  const tags = encryption.decrypt(row.tags || "[]");
 
   return {
     id: row.id,
-    title: row.title,
-    description: row.description,
+    title: encryption.decrypt(row.title),
+    description: encryption.decrypt(row.description),
     status: row.status,
     priority: row.priority,
-    category: row.category,
-    tags: JSON.parse(row.tags || "[]"),
+    category: encryption.decrypt(row.category),
+    tags: JSON.parse(tags || "[]"),
     dueDate: row.due_date,
     createdAt: row.created_at,
     updatedAt: row.updated_at,
@@ -27,7 +31,10 @@ function serialize(row) {
   };
 }
 
-function createTodoRepository(database) {
+function createTodoRepository(database, options = {}) {
+  const encryption = createFieldEncryption(options.encryptionKey);
+  initializeEncryption(database, encryption);
+
   function list(filters = {}) {
     const where = [];
     const parameters = {};
@@ -42,29 +49,35 @@ function createTodoRepository(database) {
       parameters.priority = filters.priority;
     }
 
-    if (filters.category) {
-      where.push("category = @category");
-      parameters.category = filters.category;
-    }
-
-    if (filters.search) {
-      where.push("(title LIKE @search OR description LIKE @search OR category LIKE @search OR tags LIKE @search)");
-      parameters.search = `%${filters.search}%`;
-    }
-
     const orderColumn = SORT_COLUMNS[filters.sort] || SORT_COLUMNS.created;
     const orderDirection = filters.order === "asc" ? "ASC" : "DESC";
     const nullsLast = filters.sort === "due" ? "due_date IS NULL ASC, " : "";
     const clause = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
-    return database
+    let todos = database
       .prepare(`SELECT * FROM todos ${clause} ORDER BY ${nullsLast}${orderColumn} ${orderDirection}, id DESC`)
       .all(parameters)
-      .map(serialize);
+      .map((row) => serialize(row, encryption));
+
+    if (filters.category) {
+      todos = todos.filter((todo) => todo.category === filters.category);
+    }
+
+    if (filters.search) {
+      const search = filters.search.toLocaleLowerCase();
+      todos = todos.filter((todo) => [
+        todo.title,
+        todo.description,
+        todo.category,
+        todo.tags.join(" "),
+      ].some((value) => value.toLocaleLowerCase().includes(search)));
+    }
+
+    return todos;
   }
 
   function findById(id) {
-    return serialize(database.prepare("SELECT * FROM todos WHERE id = ?").get(id));
+    return serialize(database.prepare("SELECT * FROM todos WHERE id = ?").get(id), encryption);
   }
 
   function create(todo) {
@@ -80,7 +93,10 @@ function createTodoRepository(database) {
       )
     `).run({
       ...todo,
-      tags: JSON.stringify(todo.tags),
+      title: encryption.encrypt(todo.title),
+      description: encryption.encrypt(todo.description),
+      category: encryption.encrypt(todo.category),
+      tags: encryption.encrypt(JSON.stringify(todo.tags)),
       createdAt: now,
       updatedAt: now,
       completedAt,
@@ -113,12 +129,12 @@ function createTodoRepository(database) {
       WHERE id = @id
     `).run({
       id,
-      title: next.title,
-      description: next.description,
+      title: encryption.encrypt(next.title),
+      description: encryption.encrypt(next.description),
       status: next.status,
       priority: next.priority,
-      category: next.category,
-      tags: JSON.stringify(next.tags),
+      category: encryption.encrypt(next.category),
+      tags: encryption.encrypt(JSON.stringify(next.tags)),
       dueDate: next.dueDate,
       updatedAt: now,
       completedAt,
@@ -153,6 +169,53 @@ function createTodoRepository(database) {
   }
 
   return { list, findById, create, update, remove, removeCompleted, stats };
+}
+
+function initializeEncryption(database, encryption) {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS app_metadata (
+      key TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
+  `);
+
+  const storedCheck = database
+    .prepare("SELECT value FROM app_metadata WHERE key = 'encryption_key_check'")
+    .get();
+
+  if (storedCheck) {
+    const value = encryption.decrypt(storedCheck.value);
+    if (value !== encryption.keyCheckValue) {
+      throw new Error("TODO_ENCRYPTION_KEY does not match this database.");
+    }
+  } else {
+    database.prepare(`
+      INSERT INTO app_metadata (key, value)
+      VALUES ('encryption_key_check', ?)
+    `).run(encryption.encrypt(encryption.keyCheckValue));
+  }
+
+  const rows = database
+    .prepare("SELECT id, title, description, category, tags FROM todos")
+    .all();
+  const update = database.prepare(`
+    UPDATE todos
+    SET title = @title, description = @description, category = @category, tags = @tags
+    WHERE id = @id
+  `);
+
+  database.transaction((items) => {
+    for (const row of items) {
+      if ([row.title, row.description, row.category, row.tags].every(encryption.isEncrypted)) continue;
+      update.run({
+        id: row.id,
+        title: encryption.encryptIfNeeded(row.title),
+        description: encryption.encryptIfNeeded(row.description),
+        category: encryption.encryptIfNeeded(row.category),
+        tags: encryption.encryptIfNeeded(row.tags),
+      });
+    }
+  })(rows);
 }
 
 module.exports = { createTodoRepository };

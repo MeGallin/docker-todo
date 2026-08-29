@@ -21,7 +21,7 @@ function createDatabase(options = {}) {
   database.exec(`
     CREATE TABLE IF NOT EXISTS todos (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      title TEXT NOT NULL CHECK(length(title) BETWEEN 1 AND 160),
+      title TEXT NOT NULL,
       description TEXT NOT NULL DEFAULT '',
       status TEXT NOT NULL DEFAULT 'todo'
         CHECK(status IN ('todo', 'in_progress', 'completed')),
@@ -35,13 +35,56 @@ function createDatabase(options = {}) {
       completed_at TEXT
     );
 
+  `);
+
+  removeLegacyTitleLengthConstraint(database);
+  createIndexes(database);
+
+  return database;
+}
+
+function removeLegacyTitleLengthConstraint(database) {
+  const table = database
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'todos'")
+    .get();
+
+  if (!table?.sql || !/CHECK\s*\(\s*length\s*\(\s*title\s*\)/i.test(table.sql)) return;
+
+  database.transaction(() => {
+    database.exec(`
+      DROP TABLE IF EXISTS todos_encryption_migration;
+      CREATE TABLE todos_encryption_migration (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        title TEXT NOT NULL,
+        description TEXT NOT NULL DEFAULT '',
+        status TEXT NOT NULL DEFAULT 'todo'
+          CHECK(status IN ('todo', 'in_progress', 'completed')),
+        priority TEXT NOT NULL DEFAULT 'medium'
+          CHECK(priority IN ('low', 'medium', 'high', 'urgent')),
+        category TEXT NOT NULL DEFAULT '',
+        tags TEXT NOT NULL DEFAULT '[]',
+        due_date TEXT,
+        created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL,
+        completed_at TEXT
+      );
+
+      INSERT INTO todos_encryption_migration
+      SELECT * FROM todos;
+
+      DROP TABLE todos;
+      ALTER TABLE todos_encryption_migration RENAME TO todos;
+    `);
+  })();
+}
+
+function createIndexes(database) {
+  database.exec(`
     CREATE INDEX IF NOT EXISTS idx_todos_status ON todos(status);
     CREATE INDEX IF NOT EXISTS idx_todos_priority ON todos(priority);
     CREATE INDEX IF NOT EXISTS idx_todos_due_date ON todos(due_date);
     CREATE INDEX IF NOT EXISTS idx_todos_updated_at ON todos(updated_at);
   `);
-
-  return database;
 }
 
 module.exports = { createDatabase };

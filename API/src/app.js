@@ -26,7 +26,7 @@ function createCorsOptions(request, callback) {
 
 function createApp(database, options = {}) {
   const app = express();
-  const todos = createTodoRepository(database);
+  const todos = createTodoRepository(database, { encryptionKey: options.encryptionKey });
   const publicDirectory = path.resolve(
     options.publicDirectory || process.env.PUBLIC_DIR || path.join(__dirname, "..", "public")
   );
