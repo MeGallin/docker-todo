@@ -1,0 +1,64 @@
+/*
+ * Docklist implementation of nexus-engine-redux-DESIGN.md.
+ * Tokens are semantic so components never depend on raw palette values.
+ */
+
+:root {
+  color-scheme: light;
+  font-family: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+  --font-display: "Inter", "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+
+  --bg: #ffffff;
+  --surface: #ffffff;
+  --surface-raised: #ffffff;
+  --surface-muted: #f3f4f6;
+  --surface-hover: #f9fafb;
+  --text: #111827;
+  --text-muted: #4b5563;
+  --border: #e5e7eb;
+  --border-strong: #d1d5db;
+  --accent: #dc2626;
+  --accent-strong: #b91c1c;
+  --accent-soft: #fef2f2;
+  --accent-contrast: #ffffff;
+  --danger: #b91c1c;
+  --danger-soft: #fef2f2;
+  --warning: #c2410c;
+  --warning-soft: #fff7ed;
+
+  --shadow: 0 18px 50px rgba(17, 24, 39, 0.1);
+  --shadow-small: 0 8px 24px rgba(17, 24, 39, 0.07);
+
+  --radius-card: 8px;
+  --radius-control: 8px;
+  --radius-pill: 9999px;
+
+  --space-base: 8px;
+  --space-gap: 16px;
+  --space-card: 24px;
+  --space-section: 80px;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0c0d10;
+  --surface: #111318;
+  --surface-raised: #17191f;
+  --surface-muted: #22252d;
+  --surface-hover: #1c1f26;
+  --text: #f3f4f6;
+  --text-muted: #aeb4bf;
+  --border: #2c3038;
+  --border-strong: #3b404a;
+  --accent: #dc2626;
+  --accent-strong: #f87171;
+  --accent-soft: #331719;
+  --accent-contrast: #ffffff;
+  --danger: #f87171;
+  --danger-soft: #351719;
+  --warning: #fb923c;
+  --warning-soft: #341f13;
+  --shadow: 0 22px 56px rgba(0, 0, 0, 0.4);
+  --shadow-small: 0 8px 24px rgba(0, 0, 0, 0.24);
+}

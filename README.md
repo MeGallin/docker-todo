@@ -17,6 +17,10 @@ A full-stack task manager built as one Docker deployment for Render:
 - AES-256-GCM encryption for task titles, descriptions, categories, and tags at rest
 - Single-user password authentication with server-side sessions and CSRF protection
 
+## Design system
+
+The interface follows [`nexus-engine-redux-DESIGN.md`](./nexus-engine-redux-DESIGN.md). The application-ready semantic tokens live in `Client/src/design-system.css`; component and responsive rules live in `Client/src/styles.css`. Inter is reserved for display typography, while JetBrains Mono is used for body copy, controls, labels, and technical metadata. Both fonts are self-hosted through Fontsource packages.
+
 ## Run locally
 
 Use two terminals.

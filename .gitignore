@@ -6,3 +6,6 @@ dist/
 npm-debug.log*
 .DS_Store
 Thumbs.db
+
+# Local internal handover material (kept with the project, never committed)
+/Internal Documentation/
